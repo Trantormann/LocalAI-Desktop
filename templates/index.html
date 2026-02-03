@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LocalAI Desktop - 本地AI助手</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 侧边栏 -->
+        <div class="sidebar">
+            <div class="logo">
+                <i class="fas fa-robot"></i>
+                <h2>LocalAI Desktop</h2>
+            </div>
+            
+            <div class="nav-menu">
+                <button class="nav-btn active" data-tab="chat">
+                    <i class="fas fa-comment"></i> 对话
+                </button>
+                <button class="nav-btn" data-tab="vision">
+                    <i class="fas fa-image"></i> 视觉
+                </button>
+                <button class="nav-btn" data-tab="system">
+                    <i class="fas fa-desktop"></i> 系统
+                </button>
+                <button class="nav-btn" data-tab="settings">
+                    <i class="fas fa-cog"></i> 设置
+                </button>
+            </div>
+            
+            <div class="model-selector">
+                <label for="model-select"><i class="fas fa-brain"></i> 选择模型</label>
+                <select id="model-select" class="model-select">
+                    <option value="">加载中...</option>
+                </select>
+            </div>
+            
+            <div class="system-status">
+                <h3><i class="fas fa-server"></i> 系统状态</h3>
+                <div id="system-status">
+                    正在检查...
+                </div>
+            </div>
+        </div>
+        
+        <!-- 主内容区 -->
+        <div class="main-content">
+            <!-- 聊天界面 -->
+            <div id="chat-tab" class="tab-content active">
+                <div class="chat-header">
+                    <h2>对话</h2>
+                    <button id="clear-chat" class="btn-secondary">
+                        <i class="fas fa-trash"></i> 清空
+                    </button>
+                </div>
+                
+                <div class="chat-container">
+                    <div id="chat-messages" class="chat-messages">
+                        <div class="message ai-message">
+                            <div class="avatar">
+                                <i class="fas fa-robot"></i>
+                            </div>
+                            <div class="content">
+                                Good morning, good afternoon, good evening, and good night.
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="chat-input-container">
+                        <textarea id="chat-input" 
+                                 placeholder="输入您的问题... (Shift+Enter换行，Enter发送)" 
+                                 rows="2"></textarea>
+                        <div class="input-buttons">
+                            <button id="send-btn" class="btn-primary">
+                                <i class="fas fa-paper-plane"></i> 发送
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 视觉界面 -->
+            <div id="vision-tab" class="tab-content">
+                <div class="vision-header">
+                    <h2>视觉</h2>
+                </div>
+                
+                <div class="vision-container">
+                    <div class="image-upload-area" id="drop-area">
+                        <i class="fas fa-cloud-upload-alt fa-3x"></i>
+                        <h3>拖放图片到这里，或点击上传</h3>
+                        <p>支持 JPG, PNG, GIF 格式</p>
+                        <input type="file" id="vision-upload" accept="image/*">
+                        <button class="btn-primary" onclick="document.getElementById('vision-upload').click()">
+                            <i class="fas fa-folder-open"></i> 选择图片
+                        </button>
+                    </div>
+                    
+                    <div class="image-preview-container">
+                        <div class="image-preview" id="image-preview">
+                            <p>图片预览区域</p>
+                        </div>
+                        
+                        <div class="analysis-controls">
+                            <input type="text" id="analysis-prompt" 
+                                   placeholder="输入分析指令" 
+                                   value="描述这张图片的内容">
+                            <button id="analyze-btn" class="btn-primary">
+                                <i class="fas fa-search"></i> 分析
+                            </button>
+                        </div>
+                        
+                        <div class="analysis-result" id="analysis-result">
+                            <h3>分析结果</h3>
+                            <div id="result-content">
+                                分析结果将显示在这里...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 系统控制界面 -->
+            <div id="system-tab" class="tab-content">
+                <div class="system-header">
+                    <h2>系统</h2>
+                    <div class="system-toggle">
+                        <label class="switch">
+                            <input type="checkbox" id="system-control-toggle" checked>
+                            <span class="slider"></span>
+                        </label>
+                        <span>启用控制</span>
+                    </div>
+                </div>
+                
+                <div class="system-container">
+                    <div class="system-info">
+                        <h3>系统信息</h3>
+                        <div id="system-info">
+                            正在获取系统信息...
+                        </div>
+                        <button id="refresh-system-info" class="btn-secondary">
+                            <i class="fas fa-sync"></i> 刷新
+                        </button>
+                    </div>
+                    
+                    <div class="system-controls">
+                        <h3>快速操作</h3>
+                        <div class="quick-actions">
+                            <button class="action-btn" data-app="notepad">
+                                <i class="fas fa-edit"></i> 记事本
+                            </button>
+                            <button class="action-btn" data-app="calc">
+                                <i class="fas fa-calculator"></i> 计算器
+                            </button>
+                            <button class="action-btn" data-app="mspaint">
+                                <i class="fas fa-paint-brush"></i> 画图
+                            </button>
+                            <button class="action-btn" data-app="explorer">
+                                <i class="fas fa-folder"></i> 资源管理器
+                            </button>
+                            <button class="action-btn" id="screenshot-btn">
+                                <i class="fas fa-camera"></i> 截图
+                            </button>
+                            <button class="action-btn" data-app="taskmgr">
+                                <i class="fas fa-tasks"></i> 任务管理器
+                            </button>
+                        </div>
+                        
+                        <div class="command-executor">
+                            <h4>命令执行</h4>
+                            <div class="command-input">
+                                <input type="text" id="command-input" 
+                                       placeholder="输入允许的命令">
+                                <button id="execute-btn" class="btn-primary">
+                                    <i class="fas fa-play"></i> 执行
+                                </button>
+                            </div>
+                            <div class="command-result" id="command-result">
+                                <!-- 命令执行结果将显示在这里 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 设置界面 -->
+            <div id="settings-tab" class="tab-content">
+                <div class="settings-header">
+                    <h2>设置</h2>
+                </div>
+                
+                <div class="settings-container">
+                    <div class="settings-section">
+                        <h3>模型管理</h3>
+                        <div class="setting-item">
+                            <button id="refresh-models" class="btn-primary">
+                                <i class="fas fa-sync"></i> 刷新模型列表
+                            </button>
+                            <p class="hint">刷新侧边栏中的模型选择器，显示最新安装的模型。</p>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h3>Ollama 配置</h3>
+                        <div class="setting-item">
+                            <label for="ollama-url">API地址：</label>
+                            <input type="text" id="ollama-url" 
+                                   value="http://localhost:11434" 
+                                   placeholder="Ollama API地址">
+                        </div>
+                        <button id="test-connection" class="btn-primary">
+                            <i class="fas fa-wifi"></i> 测试连接
+                        </button>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h3>安全设置</h3>
+                        <div class="setting-item">
+                            <label class="switch">
+                                <input type="checkbox" id="enable-system-control" checked>
+                                <span class="slider"></span>
+                            </label>
+                            <span>允许系统控制</span>
+                        </div>
+                        <div class="setting-item">
+                            <label class="switch">
+                                <input type="checkbox" id="enable-agent-mode" checked>
+                                <span class="slider"></span>
+                            </label>
+                            <span>启用 AI Agent 模式</span>
+                            <p class="hint" style="margin-top: 5px; font-size: 12px; color: rgba(255, 255, 255, 0.5);">
+                                开启后，AI 可以理解自然语言并自动执行系统操作，如“帮我打开记事本”
+                            </p>
+                        </div>
+                        <div class="setting-item">
+                            <label>允许的命令：</label>
+                            <textarea id="allowed-commands" rows="3">
+notepad
+calc
+mspaint
+explorer
+taskmgr
+cmd
+powershell
+control</textarea>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h3>图片设置</h3>
+                        <div class="setting-item">
+                            <label for="screenshot-quality">截图质量：</label>
+                            <input type="range" id="screenshot-quality" 
+                                   min="10" max="100" value="85">
+                            <span id="quality-value">85%</span>
+                        </div>
+                        <div class="setting-item">
+                            <label for="max-file-size">最大文件：</label>
+                            <input type="number" id="max-file-size" 
+                                   value="5" min="1" max="50">
+                            <span>MB</span>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-actions">
+                        <button id="save-settings" class="btn-primary">
+                            <i class="fas fa-save"></i> 保存
+                        </button>
+                        <button id="reset-settings" class="btn-secondary">
+                            <i class="fas fa-undo"></i> 重置
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 脚本 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

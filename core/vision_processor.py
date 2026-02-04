@@ -88,9 +88,18 @@ class VisionProcessor:
                 logger.error(f"视觉分析API错误: {response.status_code}")
                 try:
                     error_detail = response.json()
-                    logger.error(f"错误详情: {error_detail}")
+                    error_msg = error_detail.get('error', str(error_detail))
+                    logger.error(f"错误详情: {error_msg}")
+                    
+                    # 检查是否是模型加载失败
+                    if 'unable to load model' in error_msg.lower():
+                        return {
+                            'analysis': f"错误: 视觉模型 '{self.vision_model}' 加载失败。\n\n可能的原因：\n1. 模型文件损坏\n2. 模型下载不完整\n\n解决方案：\n1. 删除并重新下载模型：\n   ollama rm {self.vision_model}\n   ollama pull {self.vision_model}\n\n2. 或者尝试其他视觉模型：\n   ollama pull llava:7b",
+                            'description': '模型加载失败'
+                        }
+                    
                     return {
-                        'analysis': f"错误: API返回状态码 {response.status_code}\n详情: {error_detail}",
+                        'analysis': f"错误: API返回状态码 {response.status_code}\n详情: {error_msg}",
                         'description': '分析失败'
                     }
                 except:

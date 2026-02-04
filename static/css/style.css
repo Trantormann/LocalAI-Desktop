@@ -618,8 +618,9 @@ body {
 .switch {
     position: relative;
     display: inline-block;
-    width: 36px;
-    height: 18px;
+    width: 50px;
+    height: 26px;
+    flex-shrink: 0;
 }
 
 .switch input {
@@ -635,16 +636,16 @@ body {
     left: 0;
     right: 0;
     bottom: 0;
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(255, 255, 255, 0.15);
     transition: .3s;
-    border-radius: 18px;
+    border-radius: 26px;
 }
 
 .slider:before {
     position: absolute;
     content: "";
-    height: 12px;
-    width: 12px;
+    height: 20px;
+    width: 20px;
     left: 3px;
     bottom: 3px;
     background-color: white;
@@ -653,11 +654,11 @@ body {
 }
 
 input:checked + .slider {
-    background-color: rgba(255, 255, 255, 0.3);
+    background-color: #4CAF50;
 }
 
 input:checked + .slider:before {
-    transform: translateX(18px);
+    transform: translateX(24px);
 }
 
 /* 滚动条样式 */

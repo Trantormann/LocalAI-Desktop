@@ -335,24 +335,69 @@ class AIAgent:
                         timeout=60
                     )
                     
+                    # 用于过滤 <think> 标签的状态
+                    in_think_block = False
+                    buffer = ""
                     full_content = ""
+                    
                     for line in final_resp.iter_lines():
                         if line:
                             chunk = json.loads(line.decode('utf-8'))
                             content = chunk.get('message', {}).get('content', '')
-                            full_content += content
                             if content:
-                                yield content
+                                buffer += content
+                                
+                                # 处理缓冲区，过滤 <think> 内容
+                                while True:
+                                    if in_think_block:
+                                        end_idx = buffer.find('</think>')
+                                        if end_idx != -1:
+                                            buffer = buffer[end_idx + 8:]
+                                            in_think_block = False
+                                        else:
+                                            buffer = ""
+                                            break
+                                    else:
+                                        start_idx = buffer.find('<think>')
+                                        if start_idx != -1:
+                                            if start_idx > 0:
+                                                out = buffer[:start_idx]
+                                                full_content += out
+                                                yield out
+                                            buffer = buffer[start_idx + 7:]
+                                            in_think_block = True
+                                        else:
+                                            safe_len = len(buffer)
+                                            for i in range(1, min(7, len(buffer) + 1)):
+                                                if buffer.endswith('<think>'[:i]):
+                                                    safe_len = len(buffer) - i
+                                                    break
+                                            
+                                            if safe_len > 0:
+                                                out = buffer[:safe_len]
+                                                full_content += out
+                                                yield out
+                                                buffer = buffer[safe_len:]
+                                            break
+                    
+                    # 输出剩余缓冲区
+                    if buffer and not in_think_block:
+                        full_content += buffer
+                        yield buffer
                     
                     # 将最终完整回复存入历史
                     messages.append({'role': 'assistant', 'content': full_content})
                 else:
-                    # 没有工具调用，直接流式模拟输出（或直接返回）
+                    # 没有工具调用，直接返回回复（过滤 think 标签）
                     content = message.get('content', '')
-                    # 为了统一流式体验，我们可以把这个字符串切分输出，或者重新发起一个流式请求
-                    # 这里为了性能，直接 yield 这个内容，前端会一次性显示，或者分段 yield
                     if content:
-                        yield content
+                        # 过滤 <think>...</think> 内容
+                        import re
+                        filtered_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+                        filtered_content = filtered_content.strip()
+                        if filtered_content:
+                            yield filtered_content
+                        content = filtered_content
                     messages.append({'role': 'assistant', 'content': content})
             else:
                 yield f"错误: API返回状态码 {response.status_code}"

@@ -128,6 +128,10 @@ class ChatManager:
             )
             
             if response.status_code == 200:
+                # 用于过滤 <think> 标签的状态
+                in_think_block = False
+                buffer = ""
+                
                 for line in response.iter_lines():
                     if line:
                         try:
@@ -136,9 +140,51 @@ class ChatManager:
                                 break
                             chunk = data.get('message', {}).get('content', '')
                             if chunk:
-                                yield chunk
+                                # 将chunk加入缓冲区处理
+                                buffer += chunk
+                                
+                                # 处理缓冲区，过滤 <think> 内容
+                                while True:
+                                    if in_think_block:
+                                        # 在 think 块内，寻找结束标签
+                                        end_idx = buffer.find('</think>')
+                                        if end_idx != -1:
+                                            # 找到结束标签，跳过 think 内容
+                                            buffer = buffer[end_idx + 8:]  # 8 = len('</think>')
+                                            in_think_block = False
+                                        else:
+                                            # 未找到结束标签，清空缓冲区等待更多数据
+                                            buffer = ""
+                                            break
+                                    else:
+                                        # 不在 think 块内，寻找开始标签
+                                        start_idx = buffer.find('<think>')
+                                        if start_idx != -1:
+                                            # 找到开始标签，先输出之前的内容
+                                            if start_idx > 0:
+                                                yield buffer[:start_idx]
+                                            buffer = buffer[start_idx + 7:]  # 7 = len('<think>')
+                                            in_think_block = True
+                                        else:
+                                            # 检查是否有不完整的 <think 开始
+                                            # 保留可能的部分标签
+                                            safe_len = len(buffer)
+                                            for i in range(1, min(7, len(buffer) + 1)):
+                                                if buffer.endswith('<think>'[:i]):
+                                                    safe_len = len(buffer) - i
+                                                    break
+                                            
+                                            if safe_len > 0:
+                                                yield buffer[:safe_len]
+                                                buffer = buffer[safe_len:]
+                                            break
+                                            
                         except json.JSONDecodeError:
                             continue
+                
+                # 输出剩余缓冲区（如果不在think块内）
+                if buffer and not in_think_block:
+                    yield buffer
             elif response.status_code == 404:
                 logger.error(f"模型 {model} 不存在")
                 yield f"\n错误: 模型 '{model}' 未找到。\n\n"

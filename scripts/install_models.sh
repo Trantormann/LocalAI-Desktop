@@ -11,9 +11,9 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# 获取脚本所在目录
+# 获取脚本所在目录，然后切换到项目根目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/.."
 
 echo "========================================"
 echo "   LocalAI-Desktop 模型管理工具"

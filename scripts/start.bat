@@ -2,8 +2,9 @@
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 
-REM 获取脚本所在目录并切换到该目录
-cd /d "%~dp0"
+REM 获取脚本所在目录，然后切换到项目根目录
+cd /d "%~dp0\.."
+set "PROJECT_DIR=%cd%"
 
 echo ========================================
 echo      LocalAI-Desktop 启动工具

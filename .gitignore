@@ -9,10 +9,18 @@ venv/
 logs/
 config.json
 *.log
+models/
+
+# 临时文件
+temp_*.txt
+*.tmp
+*.temp
 
 # 操作系统
 .DS_Store
 Thumbs.db
+desktop.ini
+*.lnk
 
 # 编辑器
 .vscode/

@@ -12,9 +12,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# 获取脚本所在目录
+# 获取脚本所在目录，然后切换到项目根目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/.."
+PROJECT_DIR="$(pwd)"
 
 echo "========================================"
 echo "   LocalAI-Desktop 一键部署工具"
@@ -22,7 +23,7 @@ echo "========================================"
 echo ""
 echo "版本: v1.1"
 echo "适用系统: macOS / Linux"
-echo "项目目录: $SCRIPT_DIR"
+echo "项目目录: $PROJECT_DIR"
 echo ""
 echo "========================================"
 echo ""

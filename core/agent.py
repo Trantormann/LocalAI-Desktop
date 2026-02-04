@@ -264,7 +264,7 @@ class AIAgent:
         if model is None:
             model = self.default_model
         
-        # 第一步：发送消息和工具定义给模型（非流式，因为需要判断工具调用）
+        # 第一步：尝试发送消息和工具定义给模型
         payload = {
             'model': model,
             'messages': messages,
@@ -283,6 +283,12 @@ class AIAgent:
                 json=payload,
                 timeout=60
             )
+            
+            # 如果返回 400，可能是模型不支持 function calling，回退到普通模式
+            if response.status_code == 400:
+                logger.warning(f"模型 {model} 可能不支持 function calling，回退到普通对话模式")
+                yield from self._fallback_stream(messages, model)
+                return
             
             if response.status_code == 200:
                 result = response.json()
@@ -404,4 +410,75 @@ class AIAgent:
                 
         except Exception as e:
             logger.error(f"流式对话错误: {str(e)}")
+            yield f"错误: {str(e)}"
+    
+    def _fallback_stream(self, messages: List[Dict], model: str) -> Generator[str, None, None]:
+        """回退到普通流式对话（不使用 function calling）"""
+        payload = {
+            'model': model,
+            'messages': messages,
+            'stream': True,
+            'options': {
+                'temperature': 0.7,
+                'top_p': 0.9
+            }
+        }
+        
+        try:
+            response = requests.post(
+                f"{self.ollama_url}/api/chat",
+                json=payload,
+                stream=True,
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                in_think_block = False
+                buffer = ""
+                
+                for line in response.iter_lines():
+                    if line:
+                        try:
+                            data = json.loads(line.decode('utf-8'))
+                            if data.get('done', False):
+                                break
+                            chunk = data.get('message', {}).get('content', '')
+                            if chunk:
+                                buffer += chunk
+                                
+                                while True:
+                                    if in_think_block:
+                                        end_idx = buffer.find('</think>')
+                                        if end_idx != -1:
+                                            buffer = buffer[end_idx + 8:]
+                                            in_think_block = False
+                                        else:
+                                            buffer = ""
+                                            break
+                                    else:
+                                        start_idx = buffer.find('<think>')
+                                        if start_idx != -1:
+                                            if start_idx > 0:
+                                                yield buffer[:start_idx]
+                                            buffer = buffer[start_idx + 7:]
+                                            in_think_block = True
+                                        else:
+                                            safe_len = len(buffer)
+                                            for i in range(1, min(7, len(buffer) + 1)):
+                                                if buffer.endswith('<think>'[:i]):
+                                                    safe_len = len(buffer) - i
+                                                    break
+                                            if safe_len > 0:
+                                                yield buffer[:safe_len]
+                                                buffer = buffer[safe_len:]
+                                            break
+                        except json.JSONDecodeError:
+                            continue
+                
+                if buffer and not in_think_block:
+                    yield buffer
+            else:
+                yield f"错误: API返回状态码 {response.status_code}"
+        except Exception as e:
+            logger.error(f"回退流式对话错误: {str(e)}")
             yield f"错误: {str(e)}"

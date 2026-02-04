@@ -20,7 +20,7 @@ if errorlevel 1 (
     echo [警告] 建议使用Windows 10或Windows 11
     set /a warning_count+=1
 ) else (
-    echo [✓] 操作系统版本符合要求
+    echo [OK] 操作系统版本符合要求
 )
 echo.
 
@@ -38,7 +38,7 @@ if errorlevel 1 (
         echo [警告] Python版本低于3.10，建议升级
         set /a warning_count+=1
     ) else (
-        echo [✓] Python版本符合要求
+        echo [OK] Python版本符合要求
     )
 )
 echo.
@@ -50,7 +50,7 @@ if not exist "venv\Scripts\activate.bat" (
     echo 请运行 deploy.bat 创建虚拟环境
     set /a error_count+=1
 ) else (
-    echo [✓] 虚拟环境已创建
+    echo [OK] 虚拟环境已创建
 )
 echo.
 
@@ -62,14 +62,14 @@ if errorlevel 1 (
     echo 下载地址: https://ollama.com/download/windows
     set /a error_count+=1
 ) else (
-    echo [✓] Ollama已安装
+    echo [OK] Ollama已安装
     
     REM 检查Ollama服务
     tasklist | findstr /i "ollama" >nul
     if errorlevel 1 (
         echo [信息] Ollama服务未运行（启动应用时会自动启动）
     ) else (
-        echo [✓] Ollama服务正在运行
+        echo [OK] Ollama服务正在运行
     )
 )
 echo.
@@ -81,7 +81,7 @@ if errorlevel 1 (
     echo [警告] 网络连接异常，可能影响模型下载
     set /a warning_count+=1
 ) else (
-    echo [✓] 网络连接正常
+    echo [OK] 网络连接正常
 )
 echo.
 
@@ -98,7 +98,7 @@ if not exist "venv\Scripts\activate.bat" (
         echo [错误] Flask未安装
         set /a error_count+=1
     ) else (
-        echo [✓] Flask已安装
+        echo [OK] Flask已安装
     )
     
     python -c "import requests" 2>nul
@@ -106,7 +106,7 @@ if not exist "venv\Scripts\activate.bat" (
         echo [错误] Requests未安装
         set /a error_count+=1
     ) else (
-        echo [✓] Requests已安装
+        echo [OK] Requests已安装
     )
     
     python -c "import PIL" 2>nul
@@ -114,7 +114,7 @@ if not exist "venv\Scripts\activate.bat" (
         echo [错误] Pillow未安装
         set /a error_count+=1
     ) else (
-        echo [✓] Pillow已安装
+        echo [OK] Pillow已安装
     )
     
     python -c "import pyautogui" 2>nul
@@ -122,23 +122,25 @@ if not exist "venv\Scripts\activate.bat" (
         echo [警告] PyAutoGUI未安装（系统控制功能可选）
         set /a warning_count+=1
     ) else (
-        echo [✓] PyAutoGUI已安装
+        echo [OK] PyAutoGUI已安装
     )
 )
 echo.
 
 REM 检查配置文件
+echo.
 echo [检查 7/8] 配置文件...
 if not exist "config.json" (
     echo [警告] config.json不存在
     echo 应用将使用默认配置
     set /a warning_count+=1
 ) else (
-    echo [✓] 配置文件存在
+    echo [OK] 配置文件存在
 )
 echo.
 
 REM 检查项目文件
+echo.
 echo [检查 8/8] 项目文件完整性...
 set missing_files=0
 
@@ -171,7 +173,7 @@ if !missing_files! gtr 0 (
     echo [错误] 发现 !missing_files! 个核心文件缺失
     set /a error_count+=!missing_files!
 ) else (
-    echo [✓] 项目文件完整
+    echo [OK] 项目文件完整
 )
 echo.
 
@@ -181,7 +183,7 @@ echo          检查结果汇总
 echo ========================================
 echo.
 if !error_count! equ 0 if !warning_count! equ 0 (
-    echo [✓] 所有检查通过！环境配置正常
+    echo [OK] 所有检查通过！环境配置正常
     echo.
     echo 您可以运行 start.bat 启动应用
 ) else (

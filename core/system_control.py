@@ -4,6 +4,7 @@ import psutil
 import pyautogui
 import json
 import logging
+import platform
 from datetime import datetime
 from io import BytesIO
 import base64
@@ -11,23 +12,47 @@ from typing import Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
+# 平台检测
+PLATFORM = platform.system()  # 'Windows', 'Darwin' (macOS), 'Linux'
+
 class SystemController:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.allowed_commands = config['system'].get('allowed_commands', [])
         self.screenshot_quality = config['system'].get('screenshot_quality', 85)
         
-        # 安全命令白名单
-        self.safe_commands = {
-            'notepad': 'notepad.exe',
-            'calc': 'calc.exe',
-            'cmd': 'cmd.exe',
-            'taskmgr': 'taskmgr.exe',
-            'mspaint': 'mspaint.exe',
-            'explorer': 'explorer.exe',
-            'control': 'control.exe',
-            'powershell': 'powershell.exe'
-        }
+        # 根据平台设置安全命令白名单
+        if PLATFORM == 'Windows':
+            self.safe_commands = {
+                'notepad': 'notepad.exe',
+                'calc': 'calc.exe',
+                'cmd': 'cmd.exe',
+                'taskmgr': 'taskmgr.exe',
+                'mspaint': 'mspaint.exe',
+                'explorer': 'explorer.exe',
+                'control': 'control.exe',
+                'powershell': 'powershell.exe'
+            }
+        elif PLATFORM == 'Darwin':  # macOS
+            self.safe_commands = {
+                'notepad': ['open', '-a', 'TextEdit'],
+                'calc': ['open', '-a', 'Calculator'],
+                'mspaint': ['open', '-a', 'Preview'],
+                'explorer': ['open', '.'],
+                'control': ['open', '-a', 'System Preferences'],
+                'taskmgr': ['open', '-a', 'Activity Monitor'],
+                'terminal': ['open', '-a', 'Terminal']
+            }
+        else:  # Linux
+            self.safe_commands = {
+                'notepad': ['gedit'],
+                'calc': ['gnome-calculator'],
+                'mspaint': ['gimp'],
+                'explorer': ['nautilus', '.'],
+                'control': ['gnome-control-center'],
+                'taskmgr': ['gnome-system-monitor'],
+                'terminal': ['gnome-terminal']
+            }
     
     def execute_command(self, command: str) -> Dict[str, Any]:
         """执行系统命令（有限制）"""
@@ -40,18 +65,22 @@ class SystemController:
         # 预定义程序的启动逻辑
         if command_lower in self.safe_commands:
             try:
-                # 针对 Windows 特殊处理：使用绝对路径或双引号包裹
-                app_path = self.safe_commands[command_lower]
+                app_cmd = self.safe_commands[command_lower]
                 
-                # 对于 GUI 程序，我们需要显示窗口
-                # 只有在后台执行静默命令时才需要隐藏窗口
-                
-                # 使用列表形式传递参数
-                subprocess.Popen(
-                    [app_path],
-                    shell=False,
-                    start_new_session=True # 允许程序在 WebUI 关闭后继续运行
-                )
+                if PLATFORM == 'Windows':
+                    # Windows: 使用字符串形式
+                    subprocess.Popen(
+                        [app_cmd] if isinstance(app_cmd, str) else app_cmd,
+                        shell=False,
+                        start_new_session=True
+                    )
+                else:
+                    # macOS/Linux: 使用列表形式
+                    subprocess.Popen(
+                        app_cmd if isinstance(app_cmd, list) else [app_cmd],
+                        shell=False,
+                        start_new_session=True
+                    )
                 
                 return {
                     'success': True,
@@ -65,15 +94,24 @@ class SystemController:
         # 检查是否是已知的安全命令
         elif command_lower in self.allowed_commands:
             try:
-                # 这里的命令执行也需要注意 shell 参数
-                result = subprocess.run(
-                    command,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    creationflags=subprocess.CREATE_NO_WINDOW # 同样不显示窗口
-                )
+                if PLATFORM == 'Windows':
+                    result = subprocess.run(
+                        command,
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                else:
+                    # macOS/Linux 不支持 creationflags
+                    result = subprocess.run(
+                        command,
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
                 return {
                     'success': True,
                     'output': result.stdout,
@@ -175,28 +213,61 @@ class SystemController:
         """获取可用的应用程序列表"""
         apps = list(self.safe_commands.keys())
         
-        # 添加一些常见的Windows应用程序
-        windows_apps = [
-            '记事本', '计算器', '画图', '资源管理器',
-            '控制面板', '任务管理器', '命令提示符', 'PowerShell'
-        ]
+        # 根据平台添加本地化名称
+        if PLATFORM == 'Windows':
+            localized_apps = [
+                '记事本', '计算器', '画图', '资源管理器',
+                '控制面板', '任务管理器', '命令提示符', 'PowerShell'
+            ]
+        elif PLATFORM == 'Darwin':  # macOS
+            localized_apps = [
+                '文本编辑', '计算器', '预览', '访达',
+                '系统偏好设置', '活动监视器', '终端'
+            ]
+        else:  # Linux
+            localized_apps = [
+                '文本编辑器', '计算器', '图像编辑器', '文件管理器',
+                '系统设置', '系统监视器', '终端'
+            ]
         
-        return apps + windows_apps
+        return apps + localized_apps
     
     def open_application(self, app_name: str) -> Dict[str, Any]:
         """打开应用程序"""
-        app_mapping = {
-            '记事本': 'notepad',
-            '计算器': 'calc',
-            '画图': 'mspaint',
-            '资源管理器': 'explorer',
-            '控制面板': 'control',
-            '任务管理器': 'taskmgr',
-            '命令提示符': 'cmd',
-            'PowerShell': 'powershell'
-        }
+        # 根据平台设置本地化名称映射
+        if PLATFORM == 'Windows':
+            app_mapping = {
+                '记事本': 'notepad',
+                '计算器': 'calc',
+                '画图': 'mspaint',
+                '资源管理器': 'explorer',
+                '控制面板': 'control',
+                '任务管理器': 'taskmgr',
+                '命令提示符': 'cmd',
+                'PowerShell': 'powershell'
+            }
+        elif PLATFORM == 'Darwin':  # macOS
+            app_mapping = {
+                '文本编辑': 'notepad',
+                '计算器': 'calc',
+                '预览': 'mspaint',
+                '访达': 'explorer',
+                '系统偏好设置': 'control',
+                '活动监视器': 'taskmgr',
+                '终端': 'terminal'
+            }
+        else:  # Linux
+            app_mapping = {
+                '文本编辑器': 'notepad',
+                '计算器': 'calc',
+                '图像编辑器': 'mspaint',
+                '文件管理器': 'explorer',
+                '系统设置': 'control',
+                '系统监视器': 'taskmgr',
+                '终端': 'terminal'
+            }
         
-        # 转换中文名称
+        # 转换本地化名称
         if app_name in app_mapping:
             app_name = app_mapping[app_name]
         

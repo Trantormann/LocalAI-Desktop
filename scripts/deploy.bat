@@ -10,7 +10,7 @@ echo ========================================
 echo      LocalAI-Desktop 一键部署工具
 echo ========================================
 echo.
-echo 版本：v1.0
+echo 版本：v1.2.0
 echo 适用环境：Windows 10/11
 echo Python版本：3.10
 echo 项目目录：%PROJECT_DIR%

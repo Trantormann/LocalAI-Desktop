@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # LocalAI-Desktop macOS/Linux 一键部署脚本
-# 版本: v1.1
+# 版本: v1.2.0
 
 set -e
 
@@ -21,7 +21,7 @@ echo "========================================"
 echo "   LocalAI-Desktop 一键部署工具"
 echo "========================================"
 echo ""
-echo "版本: v1.1"
+echo "版本: v1.2.0"
 echo "适用系统: macOS / Linux"
 echo "项目目录: $PROJECT_DIR"
 echo ""

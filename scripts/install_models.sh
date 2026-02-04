@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # LocalAI-Desktop macOS/Linux 模型安装脚本
-# 版本: v1.1
+# 版本: v1.2.0
 
 # 颜色定义
 RED='\033[0;31m'

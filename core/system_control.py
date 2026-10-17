@@ -22,16 +22,19 @@ class SystemController:
         self.screenshot_quality = config['system'].get('screenshot_quality', 85)
         
         # 根据平台设置安全命令白名单
+        # 注意：cmd 和 powershell 不在白名单中，因为它们可被用于执行任意命令
         if PLATFORM == 'Windows':
             self.safe_commands = {
                 'notepad': 'notepad.exe',
                 'calc': 'calc.exe',
-                'cmd': 'cmd.exe',
                 'taskmgr': 'taskmgr.exe',
                 'mspaint': 'mspaint.exe',
                 'explorer': 'explorer.exe',
                 'control': 'control.exe',
-                'powershell': 'powershell.exe'
+                'write': 'write.exe',
+                'charmap': 'charmap.exe',
+                'snippingtool': 'SnippingTool.exe',
+                'mstsc': 'mstsc.exe'
             }
         elif PLATFORM == 'Darwin':  # macOS
             self.safe_commands = {
@@ -41,7 +44,8 @@ class SystemController:
                 'explorer': ['open', '.'],
                 'control': ['open', '-a', 'System Preferences'],
                 'taskmgr': ['open', '-a', 'Activity Monitor'],
-                'terminal': ['open', '-a', 'Terminal']
+                'terminal': ['open', '-a', 'Terminal'],
+                'screenshot': ['screencapture', '-x']
             }
         else:  # Linux
             self.safe_commands = {
@@ -51,7 +55,8 @@ class SystemController:
                 'explorer': ['nautilus', '.'],
                 'control': ['gnome-control-center'],
                 'taskmgr': ['gnome-system-monitor'],
-                'terminal': ['gnome-terminal']
+                'terminal': ['gnome-terminal'],
+                'screenshot': ['gnome-screenshot']
             }
     
     def execute_command(self, command: str) -> Dict[str, Any]:
@@ -94,20 +99,21 @@ class SystemController:
         # 检查是否是已知的安全命令
         elif command_lower in self.allowed_commands:
             try:
+                # 使用 shell=False 防止命令注入
+                # 将命令拆分为参数列表
                 if PLATFORM == 'Windows':
                     result = subprocess.run(
-                        command,
-                        shell=True,
+                        command.split(),
+                        shell=False,
                         capture_output=True,
                         text=True,
                         timeout=10,
                         creationflags=subprocess.CREATE_NO_WINDOW
                     )
                 else:
-                    # macOS/Linux 不支持 creationflags
                     result = subprocess.run(
-                        command,
-                        shell=True,
+                        command.split(),
+                        shell=False,
                         capture_output=True,
                         text=True,
                         timeout=10
@@ -217,17 +223,17 @@ class SystemController:
         if PLATFORM == 'Windows':
             localized_apps = [
                 '记事本', '计算器', '画图', '资源管理器',
-                '控制面板', '任务管理器', '命令提示符', 'PowerShell'
+                '控制面板', '任务管理器', '写字板', '截图工具'
             ]
         elif PLATFORM == 'Darwin':  # macOS
             localized_apps = [
                 '文本编辑', '计算器', '预览', '访达',
-                '系统偏好设置', '活动监视器', '终端'
+                '系统偏好设置', '活动监视器', '终端', '截图'
             ]
         else:  # Linux
             localized_apps = [
                 '文本编辑器', '计算器', '图像编辑器', '文件管理器',
-                '系统设置', '系统监视器', '终端'
+                '系统设置', '系统监视器', '终端', '截图'
             ]
         
         return apps + localized_apps
@@ -243,8 +249,10 @@ class SystemController:
                 '资源管理器': 'explorer',
                 '控制面板': 'control',
                 '任务管理器': 'taskmgr',
-                '命令提示符': 'cmd',
-                'PowerShell': 'powershell'
+                '写字板': 'write',
+                '字符映射表': 'charmap',
+                '截图工具': 'snippingtool',
+                '远程桌面': 'mstsc'
             }
         elif PLATFORM == 'Darwin':  # macOS
             app_mapping = {
@@ -254,7 +262,8 @@ class SystemController:
                 '访达': 'explorer',
                 '系统偏好设置': 'control',
                 '活动监视器': 'taskmgr',
-                '终端': 'terminal'
+                '终端': 'terminal',
+                '截图': 'screenshot'
             }
         else:  # Linux
             app_mapping = {
@@ -264,7 +273,8 @@ class SystemController:
                 '文件管理器': 'explorer',
                 '系统设置': 'control',
                 '系统监视器': 'taskmgr',
-                '终端': 'terminal'
+                '终端': 'terminal',
+                '截图': 'screenshot'
             }
         
         # 转换本地化名称

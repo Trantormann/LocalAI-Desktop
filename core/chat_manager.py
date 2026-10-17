@@ -1,7 +1,10 @@
 import json
 import requests
+import time
 from typing import List, Dict, Any, Generator
 import logging
+
+from core.utils import ThinkFilter
 
 logger = logging.getLogger(__name__)
 
@@ -10,46 +13,69 @@ class ChatManager:
         self.config = config
         self.ollama_url = config['ollama']['base_url']
         self.default_model = config['ollama']['default_model']
+        # 模型列表缓存
+        self._models_cache = None
+        self._models_cache_time = 0
+        self._cache_ttl = 30  # 缓存有效期30秒
         
-    def get_available_models(self) -> List[str]:
-        """获取可用的模型列表"""
+    def get_available_models(self, force_refresh: bool = False) -> List[str]:
+        """获取可用的模型列表（带缓存）"""
+        now = time.time()
+        if not force_refresh and self._models_cache is not None and (now - self._models_cache_time) < self._cache_ttl:
+            return self._models_cache
+        
         try:
-            response = requests.get(f"{self.ollama_url}/api/tags")
+            response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
             if response.status_code == 200:
                 models = response.json().get('models', [])
-                return [model['name'] for model in models]
+                self._models_cache = [model['name'] for model in models]
+                self._models_cache_time = now
+                return self._models_cache
         except requests.exceptions.ConnectionError:
             logger.warning("无法连接到Ollama服务")
+        except requests.exceptions.Timeout:
+            logger.warning("获取模型列表超时")
+        
+        # 返回缓存（即使过期）或默认列表
+        if self._models_cache is not None:
+            return self._models_cache
         return ['qwen3:8b', 'qwen3-vl:8b', 'qwen2.5-coder:7b']  # 默认列表
+    
+    def _get_chat_options(self) -> Dict[str, Any]:
+        """从配置获取聊天参数"""
+        chat_config = self.config.get('chat', {})
+        return {
+            'temperature': chat_config.get('temperature', 0.7),
+            'top_p': chat_config.get('top_p', 0.9),
+            'num_predict': chat_config.get('num_predict', 2048)
+        }
     
     def chat(self, messages: List[Dict], model: str = None, stream: bool = False) -> str:
         """发送聊天消息"""
         if model is None:
             model = self.default_model
         
-        # 检查模型是否存在
+        # 检查模型是否存在（使用缓存）
         available_models = self.get_available_models()
         if available_models and model not in available_models:
             logger.warning(f"模型 {model} 不可用，已安装模型: {available_models}")
             return f"错误: 模型 '{model}' 未安装。\n\n已安装的模型: {', '.join(available_models)}\n\n请运行 install_models.bat 安装模型，或在设置中选择其他模型。"
         
+        options = self._get_chat_options()
         payload = {
             'model': model,
             'messages': messages,
             'stream': stream,
-            'options': {
-                'temperature': 0.7,
-                'top_p': 0.9,
-                'num_predict': 512
-            }
+            'options': options
         }
         
         try:
+            # 连接超时 10s，读取超时 300s（模型加载/生成可能较慢）
             response = requests.post(
                 f"{self.ollama_url}/api/chat",
                 json=payload,
                 stream=stream,
-                timeout=60
+                timeout=(10, 300)
             )
             
             if response.status_code == 200:
@@ -100,7 +126,7 @@ class ChatManager:
         if model is None:
             model = self.default_model
         
-        # 检查模型是否存在
+        # 检查模型是否存在（使用缓存）
         available_models = self.get_available_models()
         if available_models and model not in available_models:
             logger.warning(f"模型 {model} 不可用，已安装模型: {available_models}")
@@ -109,82 +135,45 @@ class ChatManager:
             yield "请运行 install_models.bat 安装模型，或在设置中选择其他模型。"
             return
         
+        options = self._get_chat_options()
         payload = {
             'model': model,
             'messages': messages,
             'stream': True,
-            'options': {
-                'temperature': 0.7,
-                'top_p': 0.9
-            }
+            'options': options
         }
         
         try:
+            # 连接超时 10s，读取超时 300s（模型加载/生成可能较慢）
             response = requests.post(
                 f"{self.ollama_url}/api/chat",
                 json=payload,
                 stream=True,
-                timeout=60
+                timeout=(10, 300)
             )
             
             if response.status_code == 200:
-                # 用于过滤 <think> 标签的状态
-                in_think_block = False
-                buffer = ""
+                # 使用 ThinkFilter 过滤 <think> 推理内容
+                think_filter = ThinkFilter()
                 
                 for line in response.iter_lines():
                     if line:
                         try:
                             data = json.loads(line.decode('utf-8'))
-                            if data.get('done', False):
-                                break
-                            chunk = data.get('message', {}).get('content', '')
-                            if chunk:
-                                # 将chunk加入缓冲区处理
-                                buffer += chunk
-                                
-                                # 处理缓冲区，过滤 <think> 内容
-                                while True:
-                                    if in_think_block:
-                                        # 在 think 块内，寻找结束标签
-                                        end_idx = buffer.find('</think>')
-                                        if end_idx != -1:
-                                            # 找到结束标签，跳过 think 内容
-                                            buffer = buffer[end_idx + 8:]  # 8 = len('</think>')
-                                            in_think_block = False
-                                        else:
-                                            # 未找到结束标签，清空缓冲区等待更多数据
-                                            buffer = ""
-                                            break
-                                    else:
-                                        # 不在 think 块内，寻找开始标签
-                                        start_idx = buffer.find('<think>')
-                                        if start_idx != -1:
-                                            # 找到开始标签，先输出之前的内容
-                                            if start_idx > 0:
-                                                yield buffer[:start_idx]
-                                            buffer = buffer[start_idx + 7:]  # 7 = len('<think>')
-                                            in_think_block = True
-                                        else:
-                                            # 检查是否有不完整的 <think 开始
-                                            # 保留可能的部分标签
-                                            safe_len = len(buffer)
-                                            for i in range(1, min(7, len(buffer) + 1)):
-                                                if buffer.endswith('<think>'[:i]):
-                                                    safe_len = len(buffer) - i
-                                                    break
-                                            
-                                            if safe_len > 0:
-                                                yield buffer[:safe_len]
-                                                buffer = buffer[safe_len:]
-                                            break
-                                            
                         except json.JSONDecodeError:
                             continue
+                        if data.get('done', False):
+                            break
+                        chunk = data.get('message', {}).get('content', '')
+                        if chunk:
+                            out = think_filter.feed(chunk)
+                            if out:
+                                yield out
                 
-                # 输出剩余缓冲区（如果不在think块内）
-                if buffer and not in_think_block:
-                    yield buffer
+                # 输出剩余缓冲区
+                tail = think_filter.flush()
+                if tail:
+                    yield tail
             elif response.status_code == 404:
                 logger.error(f"模型 {model} 不存在")
                 yield f"\n错误: 模型 '{model}' 未找到。\n\n"
@@ -214,5 +203,5 @@ class ChatManager:
         try:
             response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
             return response.status_code == 200
-        except:
+        except Exception:
             return False

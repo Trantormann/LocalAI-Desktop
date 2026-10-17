@@ -1,12 +1,14 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LocalAI Desktop - 本地AI助手</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/font-awesome.min.css') }}">
 </head>
+
 <body>
     <div class="container">
         <!-- 侧边栏 -->
@@ -15,7 +17,7 @@
                 <i class="fas fa-robot"></i>
                 <h2>LocalAI Desktop</h2>
             </div>
-            
+
             <div class="nav-menu">
                 <button class="nav-btn active" data-tab="chat">
                     <i class="fas fa-comment"></i> 对话
@@ -30,14 +32,14 @@
                     <i class="fas fa-cog"></i> 设置
                 </button>
             </div>
-            
+
             <div class="model-selector">
                 <label for="model-select"><i class="fas fa-brain"></i> 选择模型</label>
                 <select id="model-select" class="model-select">
                     <option value="">加载中...</option>
                 </select>
             </div>
-            
+
             <div class="system-status">
                 <h3><i class="fas fa-server"></i> 系统状态</h3>
                 <div id="system-status">
@@ -45,7 +47,7 @@
                 </div>
             </div>
         </div>
-        
+
         <!-- 主内容区 -->
         <div class="main-content">
             <!-- 聊天界面 -->
@@ -56,7 +58,7 @@
                         <i class="fas fa-trash"></i> 清空
                     </button>
                 </div>
-                
+
                 <div class="chat-container">
                     <div id="chat-messages" class="chat-messages">
                         <div class="message ai-message">
@@ -64,16 +66,18 @@
                                 <i class="fas fa-robot"></i>
                             </div>
                             <div class="content">
-                                Good morning, good afternoon, good evening, and good night.
+                                你好！我是运行在你本地的 AI 助手，可以陪你聊天、分析图片、用自然语言控制电脑。试试对我说“打开记事本”或“看看屏幕上有什么”。
                             </div>
                         </div>
                     </div>
-                    
+
                     <div class="chat-input-container">
-                        <textarea id="chat-input" 
-                                 placeholder="输入您的问题... (Shift+Enter换行，Enter发送)" 
-                                 rows="2"></textarea>
+                        <textarea id="chat-input" placeholder="输入您的问题... (Shift+Enter换行，Enter发送，可直接粘贴图片)"
+                            rows="2"></textarea>
                         <div class="input-buttons">
+                            <button id="stop-btn" class="btn-secondary" style="display: none;">
+                                <i class="fas fa-stop"></i> 停止
+                            </button>
                             <button id="send-btn" class="btn-primary">
                                 <i class="fas fa-paper-plane"></i> 发送
                             </button>
@@ -81,13 +85,13 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- 视觉界面 -->
             <div id="vision-tab" class="tab-content">
                 <div class="vision-header">
                     <h2>视觉</h2>
                 </div>
-                
+
                 <div class="vision-container">
                     <div class="image-upload-area" id="drop-area">
                         <i class="fas fa-cloud-upload-alt fa-3x"></i>
@@ -98,21 +102,19 @@
                             <i class="fas fa-folder-open"></i> 选择图片
                         </button>
                     </div>
-                    
+
                     <div class="image-preview-container">
                         <div class="image-preview" id="image-preview">
                             <p>图片预览区域</p>
                         </div>
-                        
+
                         <div class="analysis-controls">
-                            <input type="text" id="analysis-prompt" 
-                                   placeholder="输入分析指令" 
-                                   value="描述这张图片的内容">
+                            <input type="text" id="analysis-prompt" placeholder="输入分析指令" value="描述这张图片的内容">
                             <button id="analyze-btn" class="btn-primary">
                                 <i class="fas fa-search"></i> 分析
                             </button>
                         </div>
-                        
+
                         <div class="analysis-result" id="analysis-result">
                             <h3>分析结果</h3>
                             <div id="result-content">
@@ -122,7 +124,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- 系统控制界面 -->
             <div id="system-tab" class="tab-content">
                 <div class="system-header">
@@ -135,7 +137,7 @@
                         <span>启用控制</span>
                     </div>
                 </div>
-                
+
                 <div class="system-container">
                     <div class="system-info">
                         <h3>系统信息</h3>
@@ -146,7 +148,7 @@
                             <i class="fas fa-sync"></i> 刷新
                         </button>
                     </div>
-                    
+
                     <div class="system-controls">
                         <h3>快速操作</h3>
                         <div class="quick-actions">
@@ -169,12 +171,11 @@
                                 <i class="fas fa-tasks"></i> 任务管理器
                             </button>
                         </div>
-                        
+
                         <div class="command-executor">
                             <h4>命令执行</h4>
                             <div class="command-input">
-                                <input type="text" id="command-input" 
-                                       placeholder="输入允许的命令">
+                                <input type="text" id="command-input" placeholder="输入允许的命令">
                                 <button id="execute-btn" class="btn-primary">
                                     <i class="fas fa-play"></i> 执行
                                 </button>
@@ -186,13 +187,13 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- 设置界面 -->
             <div id="settings-tab" class="tab-content">
                 <div class="settings-header">
                     <h2>设置</h2>
                 </div>
-                
+
                 <div class="settings-container">
                     <div class="settings-section">
                         <h3>模型管理</h3>
@@ -203,20 +204,19 @@
                             <p class="hint">刷新侧边栏中的模型选择器，显示最新安装的模型。</p>
                         </div>
                     </div>
-                    
+
                     <div class="settings-section">
                         <h3>Ollama 配置</h3>
                         <div class="setting-item">
                             <label for="ollama-url">API地址：</label>
-                            <input type="text" id="ollama-url" 
-                                   value="http://localhost:11434" 
-                                   placeholder="Ollama API地址">
+                            <input type="text" id="ollama-url" value="http://localhost:11434"
+                                placeholder="Ollama API地址">
                         </div>
                         <button id="test-connection" class="btn-primary">
                             <i class="fas fa-wifi"></i> 测试连接
                         </button>
                     </div>
-                    
+
                     <div class="settings-section">
                         <h3>安全设置</h3>
                         <div class="setting-item">
@@ -249,23 +249,21 @@ powershell
 control</textarea>
                         </div>
                     </div>
-                    
+
                     <div class="settings-section">
                         <h3>图片设置</h3>
                         <div class="setting-item">
                             <label for="screenshot-quality">截图质量：</label>
-                            <input type="range" id="screenshot-quality" 
-                                   min="10" max="100" value="85">
+                            <input type="range" id="screenshot-quality" min="10" max="100" value="85">
                             <span id="quality-value">85%</span>
                         </div>
                         <div class="setting-item">
                             <label for="max-file-size">最大文件：</label>
-                            <input type="number" id="max-file-size" 
-                                   value="5" min="1" max="50">
+                            <input type="number" id="max-file-size" value="5" min="1" max="50">
                             <span>MB</span>
                         </div>
                     </div>
-                    
+
                     <div class="settings-actions">
                         <button id="save-settings" class="btn-primary">
                             <i class="fas fa-save"></i> 保存
@@ -278,9 +276,10 @@ control</textarea>
             </div>
         </div>
     </div>
-    
+
     <!-- 脚本 -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='lib/socket.io.min.js') }}"></script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
+
 </html>

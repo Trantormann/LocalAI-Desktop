@@ -6,8 +6,11 @@ import sys
 import json
 import logging
 import threading
+import time
+import hashlib
+import functools
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, g
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 import base64
@@ -20,7 +23,7 @@ from core.chat_manager import ChatManager
 from core.vision_processor import VisionProcessor
 from core.system_control import SystemController
 from core.agent import AIAgent
-from core.utils import setup_logging, validate_config
+from core.utils import setup_logging, validate_config, get_secret_key, strip_think
 
 # 设置日志
 setup_logging()
@@ -36,6 +39,12 @@ except FileNotFoundError:
         'webui': {'host': '127.0.0.1', 'port': 7860, 'debug': False},
         'ollama': {'base_url': 'http://localhost:11434'}
     }
+except json.JSONDecodeError as e:
+    logger.error(f"配置文件 config.json 格式错误: {e}")
+    config = {
+        'webui': {'host': '127.0.0.1', 'port': 7860, 'debug': False},
+        'ollama': {'base_url': 'http://localhost:11434'}
+    }
 
 # 验证配置
 config = validate_config(config)
@@ -44,7 +53,8 @@ config = validate_config(config)
 app = Flask(__name__, 
             static_folder='static',
             template_folder='templates')
-app.config['SECRET_KEY'] = 'localai-desktop-secret-key-2024'
+# 使用安全的 Secret Key
+app.config['SECRET_KEY'] = get_secret_key()
 app.config['MAX_CONTENT_LENGTH'] = config['system']['max_file_size']
 
 # 启用CORS
@@ -61,8 +71,81 @@ system_controller = SystemController(config)
 # 初始化 AI Agent
 agent = AIAgent(config, system_controller, vision_processor)
 
+# ============ 认证机制 ============
+AUTH_TOKEN = os.environ.get('LOCALAI_AUTH_TOKEN', '')
+
+def require_auth(f):
+    """API认证装饰器 - 如果设置了环境变量 LOCALAI_AUTH_TOKEN 则要求认证"""
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        if not AUTH_TOKEN:
+            return f(*args, **kwargs)
+        token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        if token != AUTH_TOKEN:
+            return jsonify({'error': '未授权访问'}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+# ============ 对话历史管理 ============
+class ConversationManager:
+    """对话历史管理器 - 支持持久化、长度限制和线程安全"""
+
+    def __init__(self, config):
+        self.config = config
+        self.max_history = config.get('chat', {}).get('max_history_per_user', 100)
+        self.conversations = {}
+        self._lock = threading.RLock()
+        self._data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+        os.makedirs(self._data_dir, exist_ok=True)
+
+    def get(self, user_id: str) -> list:
+        """获取用户对话历史（返回副本，避免外部修改内部状态）"""
+        with self._lock:
+            if user_id not in self.conversations:
+                self.conversations[user_id] = self._load_from_disk(user_id)
+            return list(self.conversations[user_id])
+
+    def append(self, user_id: str, message: dict):
+        """添加消息到对话历史"""
+        with self._lock:
+            if user_id not in self.conversations:
+                self.conversations[user_id] = self._load_from_disk(user_id)
+            self.conversations[user_id].append(message)
+            # 超过上限时裁剪，保留最近的历史
+            if len(self.conversations[user_id]) > self.max_history:
+                self.conversations[user_id] = self.conversations[user_id][-self.max_history:]
+            self._save_to_disk(user_id)
+
+    def clear(self, user_id: str):
+        """清空用户对话历史"""
+        with self._lock:
+            self.conversations[user_id] = []
+            self._save_to_disk(user_id)
+    
+    def _disk_path(self, user_id: str) -> str:
+        safe_id = hashlib.sha256(user_id.encode()).hexdigest()[:16]
+        return os.path.join(self._data_dir, f'conv_{safe_id}.json')
+    
+    def _load_from_disk(self, user_id: str) -> list:
+        path = self._disk_path(user_id)
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception:
+                return []
+        return []
+    
+    def _save_to_disk(self, user_id: str):
+        path = self._disk_path(user_id)
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(self.conversations[user_id], f, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"保存对话历史失败: {e}")
+
 # 存储对话历史
-conversations = {}
+conv_manager = ConversationManager(config)
 
 @app.route('/')
 def index():
@@ -70,14 +153,30 @@ def index():
     return render_template('index.html', 
                          models=chat_manager.get_available_models())
 
-@app.route('/config.json')
-def get_config():
-    """返回配置文件内容"""
-    try:
-        with open('config.json', 'r', encoding='utf-8') as f:
-            return jsonify(json.load(f))
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+@app.route('/api/config/safe')
+@require_auth
+def get_safe_config():
+    """返回安全的配置信息（不暴露敏感字段）"""
+    safe_config = {
+        'ollama': {
+            'base_url': config['ollama']['base_url'],
+            'default_model': config['ollama']['default_model'],
+            'vision_model': config['ollama'].get('vision_model', ''),
+            'code_model': config['ollama'].get('code_model', '')
+        },
+        'system': {
+            'allow_system_control': config['system']['allow_system_control'],
+            'enable_agent_mode': config['system'].get('enable_agent_mode', True),
+            'allowed_commands': config['system']['allowed_commands'],
+            'screenshot_quality': config['system']['screenshot_quality'],
+            'max_file_size': config['system']['max_file_size']
+        },
+        'chat': {
+            'max_history_per_user': config.get('chat', {}).get('max_history_per_user', 100),
+            'num_predict': config.get('chat', {}).get('num_predict', 2048)
+        }
+    }
+    return jsonify(safe_config)
 
 @app.route('/api/models')
 def get_models():
@@ -85,10 +184,72 @@ def get_models():
     models = chat_manager.get_available_models()
     return jsonify({'models': models})
 
+@app.route('/api/settings', methods=['POST'])
+@require_auth
+def save_settings():
+    """保存设置到 config.json（仅允许修改安全字段）"""
+    try:
+        data = request.json or {}
+
+        # 允许修改的字段白名单
+        if 'ollama' in data:
+            ollama = data['ollama']
+            if 'base_url' in ollama and isinstance(ollama['base_url'], str) and ollama['base_url'].strip():
+                config['ollama']['base_url'] = ollama['base_url'].strip()
+        if 'system' in data:
+            system = data['system']
+            if 'allow_system_control' in system:
+                config['system']['allow_system_control'] = bool(system['allow_system_control'])
+            if 'enable_agent_mode' in system:
+                config['system']['enable_agent_mode'] = bool(system['enable_agent_mode'])
+            if 'allowed_commands' in system and isinstance(system['allowed_commands'], list):
+                # 过滤空白项，限制数量
+                cmds = [str(c).strip() for c in system['allowed_commands'] if str(c).strip()]
+                config['system']['allowed_commands'] = cmds[:50]
+            if 'screenshot_quality' in system:
+                try:
+                    q = int(system['screenshot_quality'])
+                    config['system']['screenshot_quality'] = max(10, min(100, q))
+                except (ValueError, TypeError):
+                    pass
+            if 'max_file_size' in system:
+                try:
+                    s = int(system['max_file_size'])
+                    config['system']['max_file_size'] = max(1024 * 1024, min(50 * 1024 * 1024, s))
+                except (ValueError, TypeError):
+                    pass
+
+        # 同步运行时对象
+        system_controller.allowed_commands = config['system']['allowed_commands']
+        system_controller.screenshot_quality = config['system']['screenshot_quality']
+        app.config['MAX_CONTENT_LENGTH'] = config['system']['max_file_size']
+
+        # 写入 config.json
+        with open('config.json', 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+
+        logger.info("设置已保存到 config.json")
+        return jsonify({'success': True, 'message': '设置已保存'})
+    except Exception as e:
+        logger.error(f"保存设置失败: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/history/<user_id>', methods=['GET'])
+def get_history(user_id):
+    """获取用户对话历史（用于刷新页面后恢复对话）"""
+    history = conv_manager.get(user_id)
+    return jsonify({'history': history[-50:]})
+
+@app.route('/api/history/<user_id>', methods=['DELETE'])
+def clear_history(user_id):
+    """清空用户对话历史"""
+    conv_manager.clear(user_id)
+    return jsonify({'success': True, 'message': '对话已清空'})
+
 @app.route('/api/chat', methods=['POST'])
 def chat():
     """文本对话API"""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     user_id = data.get('user_id', 'default')
     message = data.get('message', '')
     model = data.get('model', config['ollama']['default_model'])
@@ -97,35 +258,36 @@ def chat():
     if not message:
         return jsonify({'error': '消息不能为空'}), 400
     
-    # 初始化用户对话历史
-    if user_id not in conversations:
-        conversations[user_id] = []
-    
+    # 获取用户对话历史副本（Agent 不会修改它）
+    history = conv_manager.get(user_id)
+
     # 添加用户消息到历史
-    conversations[user_id].append({'role': 'user', 'content': message})
+    conv_manager.append(user_id, {'role': 'user', 'content': message})
+    history.append({'role': 'user', 'content': message})
     
     try:
         # 判断是否使用 Agent 模式
         if use_agent and config['system'].get('allow_system_control', False):
             # 使用 Agent 模式，支持工具调用
             response = agent.chat_with_tools(
-                messages=conversations[user_id],
+                messages=history,
                 model=model
             )
         else:
             # 普通对话模式
             response = chat_manager.chat(
-                messages=conversations[user_id],
+                messages=history,
                 model=model,
                 stream=False
             )
         
         # 添加AI回复到历史
-        conversations[user_id].append({'role': 'assistant', 'content': response})
+        conv_manager.append(user_id, {'role': 'assistant', 'content': response})
         
+        updated_history = conv_manager.get(user_id)
         return jsonify({
             'response': response,
-            'history': conversations[user_id][-10:]  # 返回最近10条
+            'history': updated_history[-10:]  # 返回最近10条
         })
     except Exception as e:
         logger.error(f"聊天错误: {str(e)}")
@@ -168,7 +330,7 @@ def system_command():
     if not config['system']['allow_system_control']:
         return jsonify({'error': '系统控制功能已禁用'}), 403
     
-    data = request.json
+    data = request.get_json(silent=True) or {}
     command = data.get('command', '')
     
     if not command:
@@ -209,7 +371,7 @@ def get_applications():
 @app.route('/api/system/open-app', methods=['POST'])
 def open_application():
     """打开应用程序"""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     app_name = data.get('app', '')
     
     if not app_name:
@@ -232,6 +394,7 @@ def handle_connect():
 @socketio.on('chat_message')
 def handle_chat_message(data):
     """WebSocket聊天消息"""
+    data = data or {}
     user_id = data.get('user_id', 'default')
     message = data.get('message', '')
     model = data.get('model', config['ollama']['default_model'])
@@ -241,15 +404,14 @@ def handle_chat_message(data):
         emit('error', {'message': '消息不能为空'})
         return
     
-    # 初始化用户对话历史
-    if user_id not in conversations:
-        conversations[user_id] = []
+    # 获取用户对话历史副本
+    history = conv_manager.get(user_id)
     
     # 添加用户消息
-    conversations[user_id].append({'role': 'user', 'content': message})
+    conv_manager.append(user_id, {'role': 'user', 'content': message})
+    history.append({'role': 'user', 'content': message})
     
-    # 获取当前会话ID
-    from flask import request
+    # 获取当前会话ID（flask.request 在 socketio 事件处理器中被注入 sid 属性）
     session_id = request.sid
     
     try:
@@ -259,8 +421,9 @@ def handle_chat_message(data):
             def agent_response():
                 try:
                     full_response = ""
+                    current_history = conv_manager.get(user_id)
                     for chunk in agent.chat_with_tools_stream(
-                        messages=conversations[user_id],
+                        messages=current_history,
                         model=model
                     ):
                         full_response += chunk
@@ -268,6 +431,10 @@ def handle_chat_message(data):
                             'chunk': chunk,
                             'done': False
                         }, room=session_id)
+
+                    # 保存AI回复到历史（过滤 think 内容）
+                    full_response = strip_think(full_response)
+                    conv_manager.append(user_id, {'role': 'assistant', 'content': full_response})
                     
                     # 发送结束标志
                     socketio.emit('chat_chunk', {
@@ -286,8 +453,9 @@ def handle_chat_message(data):
             # 普通流式响应
             def stream_response():
                 full_response = ""
+                current_history = conv_manager.get(user_id)
                 for chunk in chat_manager.chat_stream(
-                    messages=conversations[user_id],
+                    messages=current_history,
                     model=model
                 ):
                     full_response += chunk
@@ -296,8 +464,9 @@ def handle_chat_message(data):
                         'done': False
                     }, room=session_id)
                 
-                # 添加AI回复到历史
-                conversations[user_id].append({'role': 'assistant', 'content': full_response})
+                # 添加AI回复到历史（过滤 think 内容）
+                full_response = strip_think(full_response)
+                conv_manager.append(user_id, {'role': 'assistant', 'content': full_response})
                 
                 socketio.emit('chat_chunk', {
                     'chunk': '',

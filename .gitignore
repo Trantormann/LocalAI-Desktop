@@ -10,6 +10,8 @@ logs/
 config.json
 *.log
 models/
+data/
+.secret_key
 
 # 临时文件
 temp_*.txt

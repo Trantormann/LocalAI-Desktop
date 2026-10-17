@@ -6,18 +6,31 @@ import logging
 from typing import Dict, Any, List, Callable, Optional, Generator
 import requests
 
+from core.utils import ThinkFilter, strip_think
+
 logger = logging.getLogger(__name__)
+
+# 工具显示名称映射
+TOOL_DISPLAY_NAMES = {
+    'execute_command': '执行命令',
+    'open_application': '打开应用',
+    'take_screenshot': '截取屏幕',
+    'get_system_info': '获取系统信息',
+    'analyze_screen': '分析屏幕内容'
+}
+
 
 class AIAgent:
     """AI Agent - 支持 Function Calling 的智能助手"""
-    
+
     def __init__(self, config: Dict[str, Any], system_controller, vision_processor):
         self.config = config
         self.ollama_url = config['ollama']['base_url']
         self.default_model = config['ollama']['default_model']
         self.system_controller = system_controller
         self.vision_processor = vision_processor
-        
+        self.chat_config = config.get('chat', {})
+
         # 定义可用的工具函数
         self.tools = self._define_tools()
         
@@ -35,7 +48,7 @@ class AIAgent:
                             "app_name": {
                                 "type": "string",
                                 "description": "应用程序名称",
-                                "enum": ["notepad", "calc", "mspaint", "explorer", "taskmgr", "cmd", "powershell", "control"]
+                                "enum": ["notepad", "calc", "mspaint", "explorer", "taskmgr", "control", "write", "charmap", "snippingtool"]
                             }
                         },
                         "required": ["app_name"]
@@ -46,10 +59,27 @@ class AIAgent:
                 "type": "function",
                 "function": {
                     "name": "take_screenshot",
-                    "description": "截取当前屏幕，用于查看屏幕内容或分析界面",
+                    "description": "截取当前屏幕并返回截图，用于查看屏幕内容或分析界面",
                     "parameters": {
                         "type": "object",
                         "properties": {},
+                        "required": []
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "analyze_screen",
+                    "description": "截取当前屏幕并用视觉模型分析屏幕上显示的内容（文字、窗口、界面元素等）。当用户询问屏幕上有什么、帮你看看屏幕、读取屏幕文字时使用此工具",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string",
+                                "description": "想了解屏幕上的什么内容，例如：屏幕上显示了什么文字？当前打开的是什么窗口？"
+                            }
+                        },
                         "required": []
                     }
                 }
@@ -85,11 +115,20 @@ class AIAgent:
             }
         ]
     
+    def _get_options(self) -> Dict[str, Any]:
+        """从配置获取生成参数"""
+        return {
+            'temperature': self.chat_config.get('temperature', 0.7),
+            'top_p': self.chat_config.get('top_p', 0.9),
+            'num_predict': self.chat_config.get('num_predict', 2048)
+        }
+    
     def _get_function_handler(self, function_name: str) -> Optional[Callable]:
         """获取函数处理器"""
         handlers = {
             "open_application": self._handle_open_application,
             "take_screenshot": self._handle_take_screenshot,
+            "analyze_screen": self._handle_analyze_screen,
             "get_system_info": self._handle_get_system_info,
             "execute_command": self._handle_execute_command
         }
@@ -117,6 +156,24 @@ class AIAgent:
                 'success': False,
                 'error': str(e)
             }
+
+    def _handle_analyze_screen(self, question: str = "描述屏幕上显示的内容") -> Dict[str, Any]:
+        """截图并用视觉模型分析屏幕内容（产品特色：让 Agent 真正“看懂”屏幕）"""
+        logger.info(f"[Agent] 分析屏幕内容: {question}")
+        try:
+            screenshot_data = self.system_controller.take_screenshot()
+            analysis = self.vision_processor.analyze_base64_image(screenshot_data, question)
+            return {
+                'success': True,
+                'analysis': analysis,
+                'message': '屏幕分析完成'
+            }
+        except Exception as e:
+            logger.error(f"屏幕分析失败: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
     
     def _handle_get_system_info(self) -> Dict[str, Any]:
         """处理获取系统信息"""
@@ -131,28 +188,31 @@ class AIAgent:
         return result
     
     def chat_with_tools(self, messages: List[Dict], model: str = None) -> str:
-        """支持工具调用的对话"""
+        """支持工具调用的对话
+
+        注意：不会修改传入的 messages 列表（避免污染持久化历史），
+        工具调用过程中的中间消息仅存在于本次请求的副本中。
+        """
         if model is None:
             model = self.default_model
-        
+
+        # 使用副本，避免污染持久化历史
+        messages = [dict(m) for m in messages]
+
         # 第一步：发送消息和工具定义给模型
         payload = {
             'model': model,
             'messages': messages,
             'stream': False,
             'tools': self.tools,
-            'options': {
-                'temperature': 0.7,
-                'top_p': 0.9,
-                'num_predict': 512
-            }
+            'options': self._get_options()
         }
         
         try:
             response = requests.post(
                 f"{self.ollama_url}/api/chat",
                 json=payload,
-                timeout=60
+                timeout=120
             )
             
             if response.status_code == 200:
@@ -190,7 +250,7 @@ class AIAgent:
             return f"错误: {str(e)}"
     
     def _execute_tool_calls(self, tool_calls: List[Dict], messages: List[Dict], model: str) -> str:
-        """执行工具调用并继续对话"""
+        """执行工具调用并继续对话（messages 已是副本，可安全修改）"""
         logger.info(f"[Agent] 检测到 {len(tool_calls)} 个工具调用")
         
         # 添加助手消息（包含工具调用）
@@ -223,11 +283,15 @@ class AIAgent:
                 result = handler(**arguments)
             else:
                 result = {'success': False, 'error': f'未知函数: {function_name}'}
-            
+
+            # 工具结果可能包含大体积数据（如截图 base64），
+            # 注入模型上下文前进行裁剪，避免撑爆上下文窗口
+            tool_content = self._sanitize_tool_result(function_name, result)
+
             # 添加工具响应到消息历史
             messages.append({
                 'role': 'tool',
-                'content': json.dumps(result, ensure_ascii=False)
+                'content': tool_content
             })
         
         # 第二步：将工具执行结果发送给模型，获取最终回复
@@ -235,11 +299,7 @@ class AIAgent:
             'model': model,
             'messages': messages,
             'stream': False,
-            'options': {
-                'temperature': 0.7,
-                'top_p': 0.9,
-                'num_predict': 512
-            }
+            'options': self._get_options()
         }
         
         try:
@@ -259,29 +319,47 @@ class AIAgent:
             logger.error(f"获取最终回复失败: {str(e)}")
             return f"工具执行成功，但获取回复失败: {str(e)}"
     
+    def _sanitize_tool_result(self, function_name: str, result: Dict[str, Any]) -> str:
+        """将工具结果转换为可安全注入模型上下文的文本。
+
+        截图 base64 等大体积数据不进入上下文（模型无法直接读取 base64，
+        应使用 analyze_screen 工具让视觉模型分析），仅保留摘要信息。
+        """
+        sanitized = dict(result)
+        if 'screenshot' in sanitized:
+            del sanitized['screenshot']
+            sanitized['note'] = '截图已保存。如需了解屏幕内容，请调用 analyze_screen 工具。'
+        # 限制工具结果长度，防止异常数据撑爆上下文
+        content = json.dumps(sanitized, ensure_ascii=False)
+        if len(content) > 4000:
+            content = content[:4000] + '...(结果过长已截断)'
+        return content
+
     def chat_with_tools_stream(self, messages: List[Dict], model: str = None) -> Generator[str, None, None]:
-        """支持工具调用的流式对话"""
+        """支持工具调用的流式对话
+
+        注意：不会修改传入的 messages 列表（避免污染持久化历史）。
+        """
         if model is None:
             model = self.default_model
-        
+
+        # 使用副本，避免污染持久化历史
+        messages = [dict(m) for m in messages]
+
         # 第一步：尝试发送消息和工具定义给模型
         payload = {
             'model': model,
             'messages': messages,
             'stream': False,
             'tools': self.tools,
-            'options': {
-                'temperature': 0.7,
-                'top_p': 0.9,
-                'num_predict': 512
-            }
+            'options': self._get_options()
         }
         
         try:
             response = requests.post(
                 f"{self.ollama_url}/api/chat",
                 json=payload,
-                timeout=60
+                timeout=120
             )
             
             # 如果返回 400，可能是模型不支持 function calling，回退到普通模式
@@ -303,11 +381,11 @@ class AIAgent:
                         'content': '',
                         'tool_calls': tool_calls
                     })
-                    
+
                     for tool_call in tool_calls:
                         function_name = tool_call['function']['name']
                         raw_arguments = tool_call['function']['arguments']
-                        
+
                         # 处理参数：有些版本的 Ollama 返回字符串，有些返回字典
                         if isinstance(raw_arguments, str):
                             try:
@@ -317,13 +395,32 @@ class AIAgent:
                                 arguments = {}
                         else:
                             arguments = raw_arguments
-                        
+
+                        # 发送工具调用状态反馈
+                        tool_display_name = TOOL_DISPLAY_NAMES.get(function_name, function_name)
+                        yield f"\n🔧 正在{tool_display_name}...\n\n"
+
                         handler = self._get_function_handler(function_name)
-                        result_data = handler(**arguments) if handler else {'success': False, 'error': f'未知函数: {function_name}'}
-                        
+                        try:
+                            result_data = handler(**arguments) if handler else {'success': False, 'error': f'未知函数: {function_name}'}
+                        except TypeError as e:
+                            # 模型给出的参数与工具签名不匹配
+                            logger.error(f"工具参数错误: {function_name}: {e}")
+                            result_data = {'success': False, 'error': f'参数错误: {e}'}
+                        except Exception as e:
+                            logger.error(f"工具执行异常: {function_name}: {e}")
+                            result_data = {'success': False, 'error': str(e)}
+
+                        # 发送工具执行结果摘要
+                        if result_data.get('success'):
+                            yield f"✅ {tool_display_name}完成\n\n"
+                        else:
+                            error_msg = result_data.get('error', result_data.get('message', '未知错误'))
+                            yield f"❌ {tool_display_name}失败: {error_msg}\n\n"
+
                         messages.append({
                             'role': 'tool',
-                            'content': json.dumps(result_data, ensure_ascii=False)
+                            'content': self._sanitize_tool_result(function_name, result_data)
                         })
                     
                     # 第二步：执行完工具后，流式输出最终回复
@@ -331,79 +428,46 @@ class AIAgent:
                         'model': model,
                         'messages': messages,
                         'stream': True,
-                        'options': {'temperature': 0.7}
+                        'options': self._get_options()
                     }
                     
                     final_resp = requests.post(
                         f"{self.ollama_url}/api/chat",
                         json=final_payload,
                         stream=True,
-                        timeout=60
+                        timeout=120
                     )
-                    
-                    # 用于过滤 <think> 标签的状态
-                    in_think_block = False
-                    buffer = ""
+
+                    # 使用 ThinkFilter 过滤 <think> 推理内容
+                    think_filter = ThinkFilter()
                     full_content = ""
-                    
+
                     for line in final_resp.iter_lines():
                         if line:
-                            chunk = json.loads(line.decode('utf-8'))
+                            try:
+                                chunk = json.loads(line.decode('utf-8'))
+                            except json.JSONDecodeError:
+                                continue
                             content = chunk.get('message', {}).get('content', '')
                             if content:
-                                buffer += content
-                                
-                                # 处理缓冲区，过滤 <think> 内容
-                                while True:
-                                    if in_think_block:
-                                        end_idx = buffer.find('</think>')
-                                        if end_idx != -1:
-                                            buffer = buffer[end_idx + 8:]
-                                            in_think_block = False
-                                        else:
-                                            buffer = ""
-                                            break
-                                    else:
-                                        start_idx = buffer.find('<think>')
-                                        if start_idx != -1:
-                                            if start_idx > 0:
-                                                out = buffer[:start_idx]
-                                                full_content += out
-                                                yield out
-                                            buffer = buffer[start_idx + 7:]
-                                            in_think_block = True
-                                        else:
-                                            safe_len = len(buffer)
-                                            for i in range(1, min(7, len(buffer) + 1)):
-                                                if buffer.endswith('<think>'[:i]):
-                                                    safe_len = len(buffer) - i
-                                                    break
-                                            
-                                            if safe_len > 0:
-                                                out = buffer[:safe_len]
-                                                full_content += out
-                                                yield out
-                                                buffer = buffer[safe_len:]
-                                            break
-                    
+                                out = think_filter.feed(content)
+                                if out:
+                                    full_content += out
+                                    yield out
+
                     # 输出剩余缓冲区
-                    if buffer and not in_think_block:
-                        full_content += buffer
-                        yield buffer
-                    
-                    # 将最终完整回复存入历史
+                    tail = think_filter.flush()
+                    if tail:
+                        full_content += tail
+                        yield tail
+
+                    # 将最终完整回复存入本次请求的消息副本（不污染持久化历史）
                     messages.append({'role': 'assistant', 'content': full_content})
                 else:
                     # 没有工具调用，直接返回回复（过滤 think 标签）
-                    content = message.get('content', '')
+                    content = strip_think(message.get('content', ''))
                     if content:
-                        # 过滤 <think>...</think> 内容
-                        import re
-                        filtered_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
-                        filtered_content = filtered_content.strip()
-                        if filtered_content:
-                            yield filtered_content
-                        content = filtered_content
+                        yield content
                     messages.append({'role': 'assistant', 'content': content})
             else:
                 yield f"错误: API返回状态码 {response.status_code}"
@@ -418,65 +482,37 @@ class AIAgent:
             'model': model,
             'messages': messages,
             'stream': True,
-            'options': {
-                'temperature': 0.7,
-                'top_p': 0.9
-            }
+            'options': self._get_options()
         }
-        
+
         try:
             response = requests.post(
                 f"{self.ollama_url}/api/chat",
                 json=payload,
                 stream=True,
-                timeout=60
+                timeout=120
             )
-            
+
             if response.status_code == 200:
-                in_think_block = False
-                buffer = ""
-                
+                think_filter = ThinkFilter()
+
                 for line in response.iter_lines():
                     if line:
                         try:
                             data = json.loads(line.decode('utf-8'))
-                            if data.get('done', False):
-                                break
-                            chunk = data.get('message', {}).get('content', '')
-                            if chunk:
-                                buffer += chunk
-                                
-                                while True:
-                                    if in_think_block:
-                                        end_idx = buffer.find('</think>')
-                                        if end_idx != -1:
-                                            buffer = buffer[end_idx + 8:]
-                                            in_think_block = False
-                                        else:
-                                            buffer = ""
-                                            break
-                                    else:
-                                        start_idx = buffer.find('<think>')
-                                        if start_idx != -1:
-                                            if start_idx > 0:
-                                                yield buffer[:start_idx]
-                                            buffer = buffer[start_idx + 7:]
-                                            in_think_block = True
-                                        else:
-                                            safe_len = len(buffer)
-                                            for i in range(1, min(7, len(buffer) + 1)):
-                                                if buffer.endswith('<think>'[:i]):
-                                                    safe_len = len(buffer) - i
-                                                    break
-                                            if safe_len > 0:
-                                                yield buffer[:safe_len]
-                                                buffer = buffer[safe_len:]
-                                            break
                         except json.JSONDecodeError:
                             continue
-                
-                if buffer and not in_think_block:
-                    yield buffer
+                        if data.get('done', False):
+                            break
+                        chunk = data.get('message', {}).get('content', '')
+                        if chunk:
+                            out = think_filter.feed(chunk)
+                            if out:
+                                yield out
+
+                tail = think_filter.flush()
+                if tail:
+                    yield tail
             else:
                 yield f"错误: API返回状态码 {response.status_code}"
         except Exception as e:
